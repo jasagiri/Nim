@@ -1276,7 +1276,7 @@ proc semIndirectOp(c: PContext, n: PNode, flags: TExprFlags; expectedType: PType
   # overloaded call. Apply the same marker when the callable is a closure
   # iterator value, so templates accepting `iterable[T]` can consume both.
   if result.typ != nil and result.typ.kind != tyIterable and
-      flags * {efWantIterable, efPreferIteratorForIterable} != {} and
+      efPreferIteratorForIterable in flags and
       t != nil and isClosureIterator(t):
     let iterableType = newTypeS(tyIterable, c)
     rawAddSon(iterableType, result.typ)
