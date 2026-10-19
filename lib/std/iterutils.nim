@@ -20,6 +20,14 @@ template filter*[T](source: iterable[T], predicate: proc (value: T): bool): unty
         yield value
   filtered()
 
+template apply*[T](source: iterable[var T], operation: proc (value: var T)) =
+  ## Applies a mutation to each element of a mutable iterator source.
+  ##
+  ## Unlike `map` and `filter`, `apply` is a terminal operation: it mutates
+  ## the values yielded by `source` and does not produce another iterator.
+  for value in source:
+    operation(value)
+
 template asClosure*[T](source: iterable[T]): untyped =
   ## Wraps an inline iterator pipeline in one closure iterator.
   ##
