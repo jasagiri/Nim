@@ -1272,6 +1272,16 @@ proc semIndirectOp(c: PContext, n: PNode, flags: TExprFlags; expectedType: PType
     fixAbstractType(c, result)
     analyseIfAddressTakenInCall(c, result)
 
+  # Inline iterator calls are marked as `iterable` while resolving an
+  # overloaded call. Apply the same marker when the callable is a closure
+  # iterator value, so templates accepting `iterable[T]` can consume both.
+  if result.typ != nil and result.typ.kind != tyIterable and
+      flags * {efWantIterable, efPreferIteratorForIterable} != {} and
+      t != nil and isClosureIterator(t):
+    let iterableType = newTypeS(tyIterable, c)
+    rawAddSon(iterableType, result.typ)
+    result.typ = iterableType
+
 proc semDirectOp(c: PContext, n: PNode, flags: TExprFlags; expectedType: PType = nil): PNode =
   # this seems to be a hotspot in the compiler!
   let nOrig = n.copyTree
