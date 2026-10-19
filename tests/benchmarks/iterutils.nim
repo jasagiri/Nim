@@ -27,6 +27,12 @@ template filterInline[T](source: iterable[T], predicate: proc (value: T): bool):
         yield value
   filtered()
 
+template asClosure[T](source: iterable[T]): untyped =
+  iterator escaped(): T {.closure, gensym.} =
+    for value in source:
+      yield value
+  escaped
+
 proc manualSum(): int =
   for value in 0..<ItemCount:
     let mapped = transform(value)
@@ -35,6 +41,14 @@ proc manualSum(): int =
 
 proc inlinePipelineSum(): int =
   for value in mapInline(0..<ItemCount, transform).filterInline(keep):
+    result += value
+
+proc makeEscapedInlinePipeline(count: int): iterator (): int {.closure.} =
+  result = asClosure(mapInline(0..<count, transform).filterInline(keep))
+
+proc escapedInlinePipelineSum(): int =
+  let pipeline = makeEscapedInlinePipeline(ItemCount)
+  for value in pipeline():
     result += value
 
 proc makeClosureRange(count: int): iterator (): int {.closure.} =
@@ -76,4 +90,5 @@ proc benchmark(name: string, run: proc (): int {.nimcall.}, expected: int) =
 let expected = manualSum()
 benchmark("hand-written loop", manualSum, expected)
 benchmark("inline iterator pipeline", inlinePipelineSum, expected)
+benchmark("inline pipeline, one closure boundary", escapedInlinePipelineSum, expected)
 benchmark("closure iterator pipeline", closurePipelineSum, expected)
