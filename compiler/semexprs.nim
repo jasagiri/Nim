@@ -1272,6 +1272,15 @@ proc semIndirectOp(c: PContext, n: PNode, flags: TExprFlags; expectedType: PType
     fixAbstractType(c, result)
     analyseIfAddressTakenInCall(c, result)
 
+  # Match inline iterator results when a closure iterator value is used where
+  # an iterable is expected.
+  if result.typ != nil and result.typ.kind != tyIterable and
+      efPreferIteratorForIterable in flags and
+      t != nil and isClosureIterator(t):
+    let iterableType = newTypeS(tyIterable, c)
+    rawAddSon(iterableType, result.typ)
+    result.typ = iterableType
+
 proc semDirectOp(c: PContext, n: PNode, flags: TExprFlags; expectedType: PType = nil): PNode =
   # this seems to be a hotspot in the compiler!
   let nOrig = n.copyTree
