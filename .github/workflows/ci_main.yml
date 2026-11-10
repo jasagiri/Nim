@@ -214,7 +214,7 @@ jobs:
 
       # saved only by pushes to devel (PRs read the cache, they do not add to the 10 GB of the repository)
       - name: 'ccache: save'
-        if: always() && runner.os == 'Linux' && matrix.cpu == 'amd64' && runner.environment == 'github-hosted' && github.event_name == 'push' && github.ref == 'refs/heads/devel'
+        if: always() && runner.os == 'Linux' && matrix.cpu == 'amd64' && runner.environment == 'github-hosted' && github.event_name == 'pull_request'
         uses: actions/cache/save@v4
         with:
           path: ~/.cache/ccache
