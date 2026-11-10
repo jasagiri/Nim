@@ -163,6 +163,28 @@ jobs:
           nimInternalInstallDepsWindows
           echo_run echo "${{ github.workspace }}/dist/mingw64/bin" >> "${GITHUB_PATH}"
 
+      # ccache for the C compiler: `koch boot` builds the compiler several times and most of the
+      # C is the same each time, and the next run starts from the cache of the last run on devel.
+      # Only the GitHub-hosted Linux amd64 jobs (the self-hosted runner has no sudo).
+      - name: 'ccache: install'
+        if: runner.os == 'Linux' && matrix.cpu == 'amd64' && runner.environment == 'github-hosted'
+        run: |
+          set -e
+          sudo apt-get install --no-install-recommends -yq ccache
+          echo "/usr/lib/ccache" >> "$GITHUB_PATH"
+          echo "CCACHE_DIR=$HOME/.cache/ccache" >> "$GITHUB_ENV"
+          ccache --max-size=2G
+          ccache --zero-stats
+
+      - name: 'ccache: restore'
+        if: runner.os == 'Linux' && matrix.cpu == 'amd64' && runner.environment == 'github-hosted'
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-${{ runner.os }}-${{ matrix.name }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-${{ matrix.name }}-
+
       - name: 'Add build binaries to PATH'
         run: echo "${{ github.workspace }}/bin" >> "${GITHUB_PATH}"
 
@@ -185,3 +207,15 @@ jobs:
           . ci/funs.sh
           echo_run nim c koch
           echo_run ./koch boot -d:release
+
+      - name: 'ccache: statistics'
+        if: always() && runner.os == 'Linux' && matrix.cpu == 'amd64' && runner.environment == 'github-hosted'
+        run: ccache --show-stats | head -12
+
+      # saved only by pushes to devel (PRs read the cache, they do not add to the 10 GB of the repository)
+      - name: 'ccache: save'
+        if: always() && runner.os == 'Linux' && matrix.cpu == 'amd64' && runner.environment == 'github-hosted' && github.event_name == 'push' && github.ref == 'refs/heads/devel'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-${{ runner.os }}-${{ matrix.name }}-${{ github.sha }}
