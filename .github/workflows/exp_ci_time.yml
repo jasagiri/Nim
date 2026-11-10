@@ -1,0 +1,90 @@
+name: exp CI time (fork experiment, not for upstream)
+# Measures, on the GitHub-hosted Linux runner, what ccache and a RAM-backed nimcache
+# would save for the test run. Runs only on this branch of a fork.
+on:
+  push:
+    branches: [ci-time-experiment]
+  workflow_dispatch:
+
+jobs:
+  measure:
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [base, ccache, shm]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      CATS: "exception concepts lookups statictypes generics types objects metatype overload"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: 'System information'
+        run: |
+          nproc; free -m | head -2; df -h / /tmp /dev/shm | cat
+          mount | grep -E " /tmp | /dev/shm " || true
+          gcc --version | head -1
+
+      - name: 'ccache: install and restore'
+        if: matrix.variant == 'ccache'
+        run: sudo apt-get install -yq --no-install-recommends ccache
+      - name: 'ccache: cache'
+        if: matrix.variant == 'ccache'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-exp-${{ github.sha }}
+          restore-keys: |
+            ccache-exp-
+      - name: 'ccache: put the wrappers first in PATH'
+        if: matrix.variant == 'ccache'
+        run: |
+          echo "/usr/lib/ccache" >> "$GITHUB_PATH"
+          ccache -M 2G
+          ccache -z
+          ccache -s | head -8
+
+      - name: 'Add build binaries to PATH'
+        run: echo "${{ github.workspace }}/bin" >> "${GITHUB_PATH}"
+
+      - name: 'Build csourcesAny'
+        run: . ci/funs.sh && nimBuildCsourcesIfNeeded CC=gcc ucpu=amd64
+
+      - name: 'koch boot'
+        run: |
+          set -e
+          s=$(date +%s)
+          nim c koch
+          ./koch boot -d:release --lib:lib
+          e=$(date +%s)
+          echo "RESULT variant=${{ matrix.variant }} step=boot seconds=$((e - s))"
+
+      - name: 'build testament'
+        run: nim c -d:release testament/testament
+
+      - name: 'RAM-backed nimcache'
+        if: matrix.variant == 'shm'
+        run: |
+          rm -rf nimcache
+          mkdir -p /dev/shm/nimcache
+          ln -s /dev/shm/nimcache nimcache
+          ls -ld nimcache
+
+      - name: 'tests (categories, 4 at a time like testament all)'
+        run: |
+          s=$(date +%s)
+          mkdir -p logs
+          printf '%s\n' $CATS | xargs -P 4 -I{} sh -c './testament/testament --nim:bin/nim cat {} > logs/{}.log 2>&1 || true'
+          e=$(date +%s)
+          echo "RESULT variant=${{ matrix.variant }} step=tests seconds=$((e - s))"
+          grep -h -c "^.*PASS" logs/*.log | paste -sd+ | bc | sed 's/^/PASS count: /'
+          grep -h "FAIL" logs/*.log | head -5 || true
+
+      - name: 'ccache stats'
+        if: matrix.variant == 'ccache'
+        run: ccache -s | head -10
