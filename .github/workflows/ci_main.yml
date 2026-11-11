@@ -170,9 +170,19 @@ jobs:
         if: runner.os == 'Linux' && matrix.cpu == 'amd64' && runner.environment == 'github-hosted'
         run: |
           set -e
-          sudo apt-get install --no-install-recommends -yq ccache
-          echo "/usr/lib/ccache" >> "$GITHUB_PATH"
+          # Not apt's ccache (4.9.1 on ubuntu-24.04): before 4.12, ccache hashes `-march=native`
+          # as written, so an object built on one runner CPU can be replayed on another
+          # (tests/arc/thard_alignment.nim then dies with SIGILL).
+          v=4.14.3
+          curl -sL "https://github.com/ccache/ccache/releases/download/v$v/ccache-$v-linux-x86_64-glibc.tar.xz" | tar -xJ -C "$RUNNER_TEMP"
+          mkdir -p "$HOME/ccache-bin"
+          cp "$RUNNER_TEMP/ccache-$v-linux-x86_64-glibc/ccache" "$HOME/ccache-bin/ccache"
+          for c in gcc g++ cc c++; do ln -sf ccache "$HOME/ccache-bin/$c"; done
+          echo "$HOME/ccache-bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/ccache-bin:$PATH"
           echo "CCACHE_DIR=$HOME/.cache/ccache" >> "$GITHUB_ENV"
+          echo "CCACHE_COMPILERCHECK=content" >> "$GITHUB_ENV"
+          mkdir -p "$HOME/.cache/ccache"
           ccache --max-size=2G
           ccache --zero-stats
 
