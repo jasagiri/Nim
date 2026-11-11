@@ -93,6 +93,9 @@ jobs:
       # `_` is testament's "no batching" value, see `isCurrentBatch`.
       NIM_TESTAMENT_BATCH: ${{ matrix.batch || '_' }}
       NIM_COMPILE_TO_CPP: ${{ matrix.cpp || 'false' }}
+      # fork experiment: sccache with its GitHub Actions cache backend (no server)
+      SCCACHE_GHA_ENABLED: 'true'
+      SCCACHE_IDLE_TIMEOUT: '0' # keep one server, so the final statistics cover the whole job
 
     steps:
       - name: 'Disable auto conversion to CRLF by git (Windows-only)'
@@ -163,6 +166,42 @@ jobs:
           nimInternalInstallDepsWindows
           echo_run echo "${{ github.workspace }}/dist/mingw64/bin" >> "${GITHUB_PATH}"
 
+      - name: 'sccache: expose the cache service to sccache'
+        if: matrix.buildOnly != 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: 'sccache: install'
+        if: matrix.buildOnly != 'true'
+        uses: mozilla-actions/sccache-action@v0.0.9
+        with:
+          version: 'v0.10.0'
+
+      - name: 'sccache: put it in front of the C compilers'
+        # sccache run under a compiler's name acts as `sccache <that compiler>`
+        # and drops its own directory from PATH to find the real one.
+        if: matrix.buildOnly != 'true'
+        run: |
+          set -e
+          d="$HOME/sccache-bin"; mkdir -p "$d"
+          s="$(command -v sccache)"
+          case "${{ runner.os }}" in
+            Windows) for n in gcc g++; do cp "$s" "$d/$n.exe"; done ;;
+            macOS)   for n in clang clang++ cc c++; do ln -sf "$s" "$d/$n"; done ;;
+            Linux)   for n in gcc g++ cc c++; do ln -sf "$s" "$d/$n"; done ;;
+          esac
+          echo "$d" >> "$GITHUB_PATH"
+          sccache --zero-stats
+
+      - name: 'sccache: check the compiler goes through it'
+        if: matrix.buildOnly != 'true'
+        run: |
+          command -v gcc || true; command -v clang || true
+          sccache --show-stats
+
       - name: 'Add build binaries to PATH'
         run: echo "${{ github.workspace }}/bin" >> "${GITHUB_PATH}"
 
@@ -185,3 +224,7 @@ jobs:
           . ci/funs.sh
           echo_run nim c koch
           echo_run ./koch boot -d:release
+
+      - name: 'sccache: statistics'
+        if: always() && matrix.buildOnly != 'true'
+        run: sccache --show-stats
