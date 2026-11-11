@@ -176,6 +176,34 @@ jobs:
           ccache --max-size=2G
           ccache --zero-stats
 
+      # Windows: ccache used as the compiler: a copy of ccache.exe named gcc.exe in front of the
+      # mingw gcc in PATH (Nim calls `gcc`). The workspace path is the same in every run, which
+      # ccache needs (the generated C names the nimcache directory).
+      - name: 'ccache: install (Windows)'
+        if: runner.os == 'Windows'
+        run: |
+          set -e
+          curl -sL -o ccache.zip https://github.com/ccache/ccache/releases/download/v4.14.3/ccache-4.14.3-windows-x86_64.zip
+          7z x ccache.zip -occache_x -y > /dev/null
+          mkdir -p ccwrap
+          cp ccache_x/ccache-4.14.3-windows-x86_64/ccache.exe ccwrap/gcc.exe
+          cp ccache_x/ccache-4.14.3-windows-x86_64/ccache.exe ccwrap/ccache.exe
+          echo "${{ github.workspace }}/ccwrap" >> "${GITHUB_PATH}"
+          echo "CCACHE_DIR=${RUNNER_TEMP}/ccache" >> "${GITHUB_ENV}"
+          echo "CCACHE_COMPILERCHECK=content" >> "${GITHUB_ENV}"
+          mkdir -p "${RUNNER_TEMP}/ccache"
+          ./ccwrap/ccache.exe --max-size=2G
+          ./ccwrap/ccache.exe --zero-stats
+
+      - name: 'ccache: restore (Windows)'
+        if: runner.os == 'Windows'
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/ccache
+          key: ccache-${{ runner.os }}-${{ matrix.name }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-${{ matrix.name }}-
+
       - name: 'ccache: restore'
         if: runner.os == 'Linux' && matrix.cpu == 'amd64' && runner.environment == 'github-hosted'
         uses: actions/cache/restore@v4
@@ -211,6 +239,17 @@ jobs:
       - name: 'ccache: statistics'
         if: always() && runner.os == 'Linux' && matrix.cpu == 'amd64' && runner.environment == 'github-hosted'
         run: ccache --show-stats | head -12
+
+      - name: 'ccache: statistics (Windows)'
+        if: always() && runner.os == 'Windows'
+        run: ./ccwrap/ccache.exe --show-stats | head -12
+
+      - name: 'ccache: save (Windows)'
+        if: always() && runner.os == 'Windows' && github.event_name == 'pull_request'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/ccache
+          key: ccache-${{ runner.os }}-${{ matrix.name }}-${{ github.sha }}
 
       # saved only by pushes to devel (PRs read the cache, they do not add to the 10 GB of the repository)
       - name: 'ccache: save'
