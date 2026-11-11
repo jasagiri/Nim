@@ -1,0 +1,72 @@
+name: exp nimlsp hang
+# Experiment on the fork only: Packages CI on ubuntu sometimes stops in nimlsp's
+# tests/trename.nim until the 60-minute timeout. Run it many times and, when one
+# run does not finish, record where nimlsp and the test are waiting.
+on:
+  push:
+    branches: [exp-nimlsp-hang]
+
+jobs:
+  hang:
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+
+      - name: 'Install dependencies'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install --no-install-recommends -yq gdb
+
+      - name: 'Build the compiler and nimble'
+        run: |
+          set -e
+          echo "${{ github.workspace }}/bin" >> "$GITHUB_PATH"
+          . ci/funs.sh
+          nimBuildCsourcesIfNeeded CC=gcc ucpu=amd64
+          ./koch boot -d:release
+          ./koch nimble
+
+      - name: 'Build nimlsp and its rename test'
+        run: |
+          set -e
+          git clone https://github.com/PMunch/nimlsp "$RUNNER_TEMP/nimlsp"
+          cd "$RUNNER_TEMP/nimlsp"
+          git checkout 5fa2846
+          nim -v | head -1
+          nimble install --depsOnly -y
+          nimble build -y
+          nim c --hints:off -o:tests/trename_bin tests/trename.nim
+
+      - name: 'Run trename repeatedly'
+        run: |
+          cd "$RUNNER_TEMP/nimlsp"
+          hangs=0
+          for i in $(seq 1 40); do
+            start=$(date +%s)
+            ./tests/trename_bin > "out-$i.log" 2>&1 &
+            t=$!
+            while kill -0 $t 2>/dev/null && [ $(( $(date +%s) - start )) -lt 150 ]; do sleep 1; done
+            if kill -0 $t 2>/dev/null; then
+              hangs=$((hangs+1))
+              echo "::warning::run $i did not finish in 150 s"
+              tail -20 "out-$i.log"
+              for p in $(pgrep -f "$RUNNER_TEMP/nimlsp/nimlsp") $t; do
+                echo "--- stacks of pid $p ($(cat /proc/$p/comm))"
+                ps -o pid,stat,rss,pcpu,etime -p $p
+                sudo gdb -p $p -batch -ex 'set pagination off' -ex 'thread apply all bt' 2>&1 | grep -v '^\[New LWP' | head -120
+              done
+              kill -9 $t $(pgrep -f "$RUNNER_TEMP/nimlsp/nimlsp") 2>/dev/null
+            else
+              wait $t; rc=$?
+              echo "run $i: exit $rc in $(( $(date +%s) - start )) s"
+            fi
+            pkill -9 -f "$RUNNER_TEMP/nimlsp/nimlsp" 2>/dev/null || true
+          done
+          echo "hangs: $hangs / 40"
