@@ -30,6 +30,7 @@ jobs:
           echo "${{ github.workspace }}/bin" >> "$GITHUB_PATH"
           . ci/funs.sh
           nimBuildCsourcesIfNeeded CC=gcc ucpu=amd64
+          nim c --hints:off koch
           ./koch boot -d:release
           ./koch nimble
 
