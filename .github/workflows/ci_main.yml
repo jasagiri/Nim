@@ -213,6 +213,37 @@ jobs:
           restore-keys: |
             ccache-${{ runner.os }}-${{ matrix.name }}-
 
+      # macOS: Homebrew's ccache puts `clang`, `clang++`, `cc`, `gcc` links to itself in libexec;
+      # that directory in front of PATH makes Nim's `clang` go through ccache.
+      - name: 'ccache: install (macOS)'
+        if: runner.os == 'macOS'
+        run: |
+          set -e
+          brew install ccache
+          echo "$(brew --prefix ccache)/libexec" >> "$GITHUB_PATH"
+          echo "CCACHE_DIR=$HOME/.cache/ccache" >> "$GITHUB_ENV"
+          echo "CCACHE_COMPILERCHECK=content" >> "$GITHUB_ENV"
+          mkdir -p "$HOME/.cache/ccache"
+          ccache --max-size=2G
+          ccache --zero-stats
+
+      - name: 'ccache: restore (macOS)'
+        if: runner.os == 'macOS'
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-${{ runner.os }}-${{ matrix.name }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-${{ matrix.name }}-
+
+      - name: 'ccache: check the compiler goes through it (macOS)'
+        if: runner.os == 'macOS'
+        run: |
+          set -e
+          command -v clang
+          command -v clang++
+          readlink "$(command -v clang)"
+
       - name: 'Add build binaries to PATH'
         run: echo "${{ github.workspace }}/bin" >> "${GITHUB_PATH}"
 
@@ -243,6 +274,17 @@ jobs:
       - name: 'ccache: statistics (Windows)'
         if: always() && runner.os == 'Windows'
         run: ./ccwrap/ccache.exe --show-stats | head -12
+
+      - name: 'ccache: statistics (macOS)'
+        if: always() && runner.os == 'macOS'
+        run: ccache --show-stats | head -12
+
+      - name: 'ccache: save (macOS)'
+        if: always() && runner.os == 'macOS' && github.event_name == 'pull_request'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-${{ runner.os }}-${{ matrix.name }}-${{ github.sha }}
 
       - name: 'ccache: save (Windows)'
         if: always() && runner.os == 'Windows' && github.event_name == 'pull_request'
