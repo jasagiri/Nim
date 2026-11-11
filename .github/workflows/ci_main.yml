@@ -163,6 +163,97 @@ jobs:
           nimInternalInstallDepsWindows
           echo_run echo "${{ github.workspace }}/dist/mingw64/bin" >> "${GITHUB_PATH}"
 
+      # ccache for the C compiler: `koch boot` builds the compiler several times and most of the
+      # C is the same each time, and the next run starts from the cache of the last run on devel.
+      # Only the GitHub-hosted Linux amd64 jobs (the self-hosted runner has no sudo).
+      - name: 'ccache: install'
+        if: runner.os == 'Linux' && matrix.cpu == 'amd64' && runner.environment == 'github-hosted'
+        run: |
+          set -e
+          # Not apt's ccache (4.9.1 on ubuntu-24.04): before 4.12, ccache hashes `-march=native`
+          # as written, so an object built on one runner CPU can be replayed on another
+          # (tests/arc/thard_alignment.nim then dies with SIGILL).
+          v=4.14.3
+          curl -sL "https://github.com/ccache/ccache/releases/download/v$v/ccache-$v-linux-x86_64-glibc.tar.xz" | tar -xJ -C "$RUNNER_TEMP"
+          mkdir -p "$HOME/ccache-bin"
+          cp "$RUNNER_TEMP/ccache-$v-linux-x86_64-glibc/ccache" "$HOME/ccache-bin/ccache"
+          for c in gcc g++ cc c++; do ln -sf ccache "$HOME/ccache-bin/$c"; done
+          echo "$HOME/ccache-bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/ccache-bin:$PATH"
+          echo "CCACHE_DIR=$HOME/.cache/ccache" >> "$GITHUB_ENV"
+          echo "CCACHE_COMPILERCHECK=content" >> "$GITHUB_ENV"
+          mkdir -p "$HOME/.cache/ccache"
+          ccache --max-size=2G
+          ccache --zero-stats
+
+      # Windows: ccache used as the compiler: a copy of ccache.exe named gcc.exe in front of the
+      # mingw gcc in PATH (Nim calls `gcc`). The workspace path is the same in every run, which
+      # ccache needs (the generated C names the nimcache directory).
+      - name: 'ccache: install (Windows)'
+        if: runner.os == 'Windows'
+        run: |
+          set -e
+          curl -sL -o ccache.zip https://github.com/ccache/ccache/releases/download/v4.14.3/ccache-4.14.3-windows-x86_64.zip
+          7z x ccache.zip -occache_x -y > /dev/null
+          mkdir -p ccwrap
+          cp ccache_x/ccache-4.14.3-windows-x86_64/ccache.exe ccwrap/gcc.exe
+          cp ccache_x/ccache-4.14.3-windows-x86_64/ccache.exe ccwrap/ccache.exe
+          echo "${{ github.workspace }}/ccwrap" >> "${GITHUB_PATH}"
+          echo "CCACHE_DIR=${RUNNER_TEMP}/ccache" >> "${GITHUB_ENV}"
+          echo "CCACHE_COMPILERCHECK=content" >> "${GITHUB_ENV}"
+          mkdir -p "${RUNNER_TEMP}/ccache"
+          ./ccwrap/ccache.exe --max-size=2G
+          ./ccwrap/ccache.exe --zero-stats
+
+      - name: 'ccache: restore (Windows)'
+        if: runner.os == 'Windows'
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/ccache
+          key: ccache-${{ runner.os }}-${{ matrix.name }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-${{ matrix.name }}-
+
+      - name: 'ccache: restore'
+        if: runner.os == 'Linux' && matrix.cpu == 'amd64' && runner.environment == 'github-hosted'
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-${{ runner.os }}-${{ matrix.name }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-${{ matrix.name }}-
+
+      # macOS: Homebrew's ccache puts `clang`, `clang++`, `cc`, `gcc` links to itself in libexec;
+      # that directory in front of PATH makes Nim's `clang` go through ccache.
+      - name: 'ccache: install (macOS)'
+        if: runner.os == 'macOS'
+        run: |
+          set -e
+          brew install ccache
+          echo "$(brew --prefix ccache)/libexec" >> "$GITHUB_PATH"
+          echo "CCACHE_DIR=$HOME/.cache/ccache" >> "$GITHUB_ENV"
+          echo "CCACHE_COMPILERCHECK=content" >> "$GITHUB_ENV"
+          mkdir -p "$HOME/.cache/ccache"
+          ccache --max-size=2G
+          ccache --zero-stats
+
+      - name: 'ccache: restore (macOS)'
+        if: runner.os == 'macOS'
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-${{ runner.os }}-${{ matrix.name }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-${{ matrix.name }}-
+
+      - name: 'ccache: check the compiler goes through it (macOS)'
+        if: runner.os == 'macOS'
+        run: |
+          set -e
+          command -v clang
+          command -v clang++
+          readlink "$(command -v clang)"
+
       - name: 'Add build binaries to PATH'
         run: echo "${{ github.workspace }}/bin" >> "${GITHUB_PATH}"
 
@@ -185,3 +276,37 @@ jobs:
           . ci/funs.sh
           echo_run nim c koch
           echo_run ./koch boot -d:release
+
+      - name: 'ccache: statistics'
+        if: always() && runner.os == 'Linux' && matrix.cpu == 'amd64' && runner.environment == 'github-hosted'
+        run: ccache --show-stats | head -12
+
+      - name: 'ccache: statistics (Windows)'
+        if: always() && runner.os == 'Windows'
+        run: ./ccwrap/ccache.exe --show-stats | head -12
+
+      - name: 'ccache: statistics (macOS)'
+        if: always() && runner.os == 'macOS'
+        run: ccache --show-stats | head -12
+
+      - name: 'ccache: save (macOS)'
+        if: always() && runner.os == 'macOS' && github.event_name == 'pull_request'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-${{ runner.os }}-${{ matrix.name }}-${{ github.sha }}
+
+      - name: 'ccache: save (Windows)'
+        if: always() && runner.os == 'Windows' && github.event_name == 'pull_request'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/ccache
+          key: ccache-${{ runner.os }}-${{ matrix.name }}-${{ github.sha }}
+
+      # saved only by pushes to devel (PRs read the cache, they do not add to the 10 GB of the repository)
+      - name: 'ccache: save'
+        if: always() && runner.os == 'Linux' && matrix.cpu == 'amd64' && runner.environment == 'github-hosted' && github.event_name == 'pull_request'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-${{ runner.os }}-${{ matrix.name }}-${{ github.sha }}
