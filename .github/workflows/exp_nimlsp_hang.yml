@@ -30,7 +30,7 @@ jobs:
           echo "${{ github.workspace }}/bin" >> "$GITHUB_PATH"
           . ci/funs.sh
           nimBuildCsourcesIfNeeded CC=gcc ucpu=amd64
-          nim c --hints:off koch
+          bin/nim c --hints:off koch
           ./koch boot -d:release
           ./koch nimble
 
@@ -47,6 +47,7 @@ jobs:
 
       - name: 'Run trename repeatedly'
         run: |
+          set +e  # a failing run, kill or wait must not end the loop
           cd "$RUNNER_TEMP/nimlsp"
           hangs=0
           for i in $(seq 1 40); do
